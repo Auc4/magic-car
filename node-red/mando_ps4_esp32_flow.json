@@ -1,141 +1,141 @@
 [
-  {
-    "id": "a1f0c0de00000001",
-    "type": "tab",
-    "label": "Mando PS4 → ESP32",
-    "disabled": false,
-    "info": "Abre http://127.0.0.1:1880/mando en Chrome o Edge con el mando conectado.\nCambia la IP del nodo UDP por la que muestra el ESP32 en el monitor serie."
-  },
-  {
-    "id": "a1f0c0de00000010",
-    "type": "comment",
-    "z": "a1f0c0de00000001",
-    "name": "1) Abre http://127.0.0.1:1880/mando   2) Pon la IP del ESP32 en el nodo UDP",
-    "info": "La página lee el mando con la Gamepad API del navegador y envía JSON por WebSocket.\nLa función lo convierte a CSV \"lx,ly,rx,ry,l2,r2,botones\" y el nodo UDP lo manda al ESP32.",
-    "x": 330,
-    "y": 40,
-    "wires": []
-  },
-  {
-    "id": "a1f0c0de00000020",
-    "type": "http in",
-    "z": "a1f0c0de00000001",
-    "name": "GET /mando",
-    "url": "/mando",
-    "method": "get",
-    "upload": false,
-    "swaggerDoc": "",
-    "x": 120,
-    "y": 100,
-    "wires": [
-      [
-        "a1f0c0de00000021"
-      ]
-    ]
-  },
-  {
-    "id": "a1f0c0de00000021",
-    "type": "template",
-    "z": "a1f0c0de00000001",
-    "name": "Página del mando",
-    "field": "payload",
-    "fieldType": "msg",
-    "format": "html",
-    "syntax": "plain",
-    "template": "<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Mando PS4 → ESP32</title>\n<style>\n  :root { --bg:#14161a; --card:#1d2026; --txt:#e8e8e8; --dim:#8a8f98; --ok:#2ecc71; --bad:#e74c3c; --acc:#3d8bfd; }\n  * { box-sizing: border-box; }\n  body { margin:0; padding:20px; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui, sans-serif; }\n  h1 { font-size:20px; margin:0 0 12px; }\n  .estado { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }\n  .pill { padding:4px 10px; border-radius:999px; background:var(--card); font-size:13px; }\n  .pill.ok { background:#1e4d33; } .pill.bad { background:#5a2222; }\n  .aviso { background:#4a3b12; padding:8px 12px; border-radius:8px; margin-bottom:12px; }\n  .grid { display:flex; gap:20px; flex-wrap:wrap; }\n  .card { background:var(--card); border-radius:12px; padding:14px; }\n  .stick { width:140px; height:140px; border-radius:50%; border:2px solid #3a3f48; position:relative; }\n  .stick .punto { width:18px; height:18px; border-radius:50%; background:var(--acc); position:absolute; left:61px; top:61px; }\n  .etq { color:var(--dim); font-size:12px; margin-top:6px; text-align:center; font-variant-numeric:tabular-nums; }\n  .barra { width:30px; height:140px; background:#2a2e35; border-radius:6px; position:relative; overflow:hidden; }\n  .barra div { position:absolute; bottom:0; width:100%; background:var(--acc); }\n  .botones { display:grid; grid-template-columns:repeat(6, auto); gap:6px; }\n  .btn { padding:4px 8px; border-radius:6px; background:#2a2e35; font-size:12px; text-align:center; }\n  .btn.on { background:var(--acc); color:#fff; }\n  pre { margin:14px 0 0; color:var(--dim); font-size:13px; }\n</style>\n</head>\n<body>\n<h1>Mando PS4 → Node-RED → ESP32 (UDP)</h1>\n\n<div class=\"estado\">\n  <span id=\"stWs\" class=\"pill bad\">WebSocket: desconectado</span>\n  <span id=\"stPad\" class=\"pill bad\">Mando: pulsa cualquier botón</span>\n  <span id=\"stEnv\" class=\"pill\">Enviando: no</span>\n</div>\n<div class=\"aviso\">Mantén esta pestaña visible: si la minimizas o cambias de pestaña se deja de enviar y el ESP32 se detiene por seguridad.</div>\n\n<div class=\"grid\">\n  <div class=\"card\"><div class=\"stick\" id=\"stickL\"><div class=\"punto\"></div></div><div class=\"etq\" id=\"txtL\">L: 0, 0</div></div>\n  <div class=\"card\"><div class=\"stick\" id=\"stickR\"><div class=\"punto\"></div></div><div class=\"etq\" id=\"txtR\">R: 0, 0</div></div>\n  <div class=\"card\" style=\"display:flex; gap:14px;\">\n    <div><div class=\"barra\"><div id=\"barL2\"></div></div><div class=\"etq\" id=\"txtL2\">L2 0</div></div>\n    <div><div class=\"barra\"><div id=\"barR2\"></div></div><div class=\"etq\" id=\"txtR2\">R2 0</div></div>\n  </div>\n  <div class=\"card\"><div class=\"botones\" id=\"botones\"></div></div>\n</div>\n<pre id=\"ultimo\">Último paquete: —</pre>\n\n<script>\n// ===== Configuración =====\nconst HZ = 50;            // paquetes por segundo hacia Node-RED\nconst ZONA_MUERTA = 0.08; // ignora movimientos pequeños del joystick (0..1)\nconst WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/mando';\n\n// Mapeo estándar del DualShock 4 en Chrome/Edge (índice = bit en \"b\")\nconst NOMBRES = ['X', 'O', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Share', 'Options',\n                 'L3', 'R3', '↑', '↓', '←', '→', 'PS', 'Touch'];\n\nconst $ = (id) => document.getElementById(id);\nconst contBotones = $('botones');\nNOMBRES.forEach((n, i) => {\n  const d = document.createElement('div');\n  d.className = 'btn'; d.id = 'b' + i; d.textContent = n;\n  contBotones.appendChild(d);\n});\n\nfunction pill(el, ok, texto) { el.className = 'pill ' + (ok ? 'ok' : 'bad'); el.textContent = texto; }\n\n// ===== WebSocket con reconexión automática =====\nlet ws = null;\nfunction conectarWS() {\n  ws = new WebSocket(WS_URL);\n  ws.onopen  = () => pill($('stWs'), true, 'WebSocket: conectado');\n  ws.onclose = () => { pill($('stWs'), false, 'WebSocket: desconectado'); setTimeout(conectarWS, 1000); };\n  ws.onerror = () => ws.close();\n}\nconectarWS();\n\n// ===== Lectura del mando =====\nconst zm = (v) => (Math.abs(v) < ZONA_MUERTA ? 0 : v);\nconst pct = (v) => Math.round(v * 100) || 0; // || 0 evita \"-0\"\n\nfunction buscarMando() {\n  const pads = navigator.getGamepads ? navigator.getGamepads() : [];\n  for (const p of pads) if (p && p.connected) return p;\n  return null;\n}\n\nfunction leer(gp) {\n  const a = gp.axes, b = gp.buttons;\n  let mascara = 0;\n  for (let i = 0; i < b.length && i < 32; i++) if (b[i].pressed) mascara |= (1 << i);\n  return {\n    lx: pct(zm(a[0] || 0)),\n    ly: pct(-zm(a[1] || 0)),   // arriba = positivo\n    rx: pct(zm(a[2] || 0)),\n    ry: pct(-zm(a[3] || 0)),   // arriba = positivo\n    l2: pct(b[6] ? b[6].value : 0),\n    r2: pct(b[7] ? b[7].value : 0),\n    b: mascara >>> 0\n  };\n}\n\nconst NEUTRO = { lx: 0, ly: 0, rx: 0, ry: 0, l2: 0, r2: 0, b: 0 };\nfunction enviar(datos) {\n  if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 1024) {\n    ws.send(JSON.stringify(datos));\n    return true;\n  }\n  return false;\n}\n\n// Seguridad: si la pestaña se oculta, se manda un paquete neutro y se deja de enviar.\n// Así el ESP32 recibe \"todo a cero\" y, además, su failsafe salta al no recibir más datos.\ndocument.addEventListener('visibilitychange', () => { if (document.hidden) enviar(NEUTRO); });\n\n// ===== Pintar en pantalla =====\nfunction moverStick(id, x, y) {\n  const p = $(id).querySelector('.punto');\n  p.style.left = (61 + x * 0.6) + 'px';\n  p.style.top  = (61 - y * 0.6) + 'px';\n}\nfunction pintar(d) {\n  moverStick('stickL', d.lx, d.ly); $('txtL').textContent = 'L: ' + d.lx + ', ' + d.ly;\n  moverStick('stickR', d.rx, d.ry); $('txtR').textContent = 'R: ' + d.rx + ', ' + d.ry;\n  $('barL2').style.height = d.l2 + '%'; $('txtL2').textContent = 'L2 ' + d.l2;\n  $('barR2').style.height = d.r2 + '%'; $('txtR2').textContent = 'R2 ' + d.r2;\n  NOMBRES.forEach((_, i) => $('b' + i).classList.toggle('on', (d.b >>> i) & 1));\n}\n\n// ===== Bucle principal =====\nsetInterval(() => {\n  const gp = buscarMando();\n  if (!gp) {\n    pill($('stPad'), false, 'Mando: pulsa cualquier botón');\n    $('stEnv').textContent = 'Enviando: no';\n    return; // sin mando no se envía nada → el ESP32 activa su failsafe\n  }\n  pill($('stPad'), true, 'Mando: ' + gp.id.slice(0, 40));\n\n  const datos = leer(gp);\n  pintar(datos);\n  if (document.hidden) return;\n\n  const ok = enviar(datos);\n  $('stEnv').textContent = 'Enviando: ' + (ok ? HZ + ' Hz' : 'no');\n  if (ok) $('ultimo').textContent = 'Último paquete: ' + JSON.stringify(datos);\n}, 1000 / HZ);\n\nwindow.addEventListener('gamepadconnected',    (e) => console.log('Mando conectado:', e.gamepad.id));\nwindow.addEventListener('gamepaddisconnected', (e) => console.log('Mando desconectado:', e.gamepad.id));\n</script>\n</body>\n</html>\n",
-    "output": "str",
-    "x": 310,
-    "y": 100,
-    "wires": [
-      [
-        "a1f0c0de00000022"
-      ]
-    ]
-  },
-  {
-    "id": "a1f0c0de00000022",
-    "type": "http response",
-    "z": "a1f0c0de00000001",
-    "name": "",
-    "statusCode": "",
-    "headers": {},
-    "x": 490,
-    "y": 100,
-    "wires": []
-  },
-  {
-    "id": "a1f0c0de00000030",
-    "type": "websocket in",
-    "z": "a1f0c0de00000001",
-    "name": "Datos del mando",
-    "server": "a1f0c0de00000090",
-    "client": "",
-    "x": 130,
-    "y": 180,
-    "wires": [
-      [
-        "a1f0c0de00000031"
-      ]
-    ]
-  },
-  {
-    "id": "a1f0c0de00000031",
-    "type": "function",
-    "z": "a1f0c0de00000001",
-    "name": "JSON → CSV",
-    "func": "// Recibe el JSON que envía la página del mando y lo convierte en una\n// línea CSV corta para el ESP32:   lx,ly,rx,ry,l2,r2,botones\n//   lx, ly, rx, ry : -100..100   (arriba y derecha = positivo)\n//   l2, r2         :    0..100   (gatillos analógicos)\n//   botones        : máscara de bits (bit 0 = X, 1 = O, 2 = □, 3 = △, ...)\nlet d;\ntry {\n    d = JSON.parse(msg.payload);\n} catch (e) {\n    return null; // mensaje no válido: se descarta\n}\n\nconst lim = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));\n\n// Aquí puedes transformar los datos antes de enviarlos\n// (invertir ejes, escalar a PWM, mezclar para un robot diferencial, etc.)\nconst campos = [\n    lim(d.lx, -100, 100), lim(d.ly, -100, 100),\n    lim(d.rx, -100, 100), lim(d.ry, -100, 100),\n    lim(d.l2, 0, 100),    lim(d.r2, 0, 100),\n    (Number(d.b) >>> 0)\n];\n\nmsg.payload = campos.join(',');\n\n// Estado bajo el nodo (máx. 4 veces por segundo para no saturar el editor)\nconst ahora = Date.now();\nif (ahora - (context.get('t') || 0) > 250) {\n    node.status({ fill: 'green', shape: 'dot', text: msg.payload });\n    context.set('t', ahora);\n}\nreturn msg;\n",
-    "outputs": 1,
-    "timeout": 0,
-    "noerr": 0,
-    "initialize": "",
-    "finalize": "",
-    "libs": [],
-    "x": 330,
-    "y": 180,
-    "wires": [
-      [
-        "a1f0c0de00000032",
-        "a1f0c0de00000033"
-      ]
-    ]
-  },
-  {
-    "id": "a1f0c0de00000032",
-    "type": "udp out",
-    "z": "a1f0c0de00000001",
-    "name": "UDP → ESP32",
-    "addr": "192.168.1.50",
-    "iface": "",
-    "port": "4210",
-    "ipv": "udp4",
-    "outport": "",
-    "base64": false,
-    "multicast": "false",
-    "x": 540,
-    "y": 180,
-    "wires": []
-  },
-  {
-    "id": "a1f0c0de00000033",
-    "type": "debug",
-    "z": "a1f0c0de00000001",
-    "name": "Ver paquetes",
-    "active": false,
-    "tosidebar": true,
-    "console": false,
-    "tostatus": false,
-    "complete": "payload",
-    "targetType": "msg",
-    "statusVal": "",
-    "statusType": "auto",
-    "x": 540,
-    "y": 240,
-    "wires": []
-  },
-  {
-    "id": "a1f0c0de00000090",
-    "type": "websocket-listener",
-    "path": "/ws/mando",
-    "wholemsg": "false"
-  }
+    {
+        "id": "a1f0c0de00000001",
+        "type": "tab",
+        "label": "Mando PS4 → ESP32",
+        "disabled": false,
+        "info": "Abre http://127.0.0.1:1880/mando en Chrome o Edge con el mando conectado.\nCambia la IP del nodo UDP por la que muestra el ESP32 en el monitor serie."
+    },
+    {
+        "id": "a1f0c0de00000090",
+        "type": "websocket-listener",
+        "path": "/ws/mando",
+        "wholemsg": "false"
+    },
+    {
+        "id": "a1f0c0de00000010",
+        "type": "comment",
+        "z": "a1f0c0de00000001",
+        "name": "1) Abre http://127.0.0.1:1880/mando   2) Pon la IP del ESP32 en el nodo UDP",
+        "info": "La página lee el mando con la Gamepad API del navegador y envía JSON por WebSocket.\nLa función lo convierte a CSV \"lx,ly,rx,ry,l2,r2,botones\" y el nodo UDP lo manda al ESP32.",
+        "x": 330,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "a1f0c0de00000020",
+        "type": "http in",
+        "z": "a1f0c0de00000001",
+        "name": "GET /mando",
+        "url": "/mando",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 120,
+        "y": 100,
+        "wires": [
+            [
+                "a1f0c0de00000021"
+            ]
+        ]
+    },
+    {
+        "id": "a1f0c0de00000021",
+        "type": "template",
+        "z": "a1f0c0de00000001",
+        "name": "Página del mando",
+        "field": "payload",
+        "fieldType": "msg",
+        "format": "html",
+        "syntax": "plain",
+        "template": "<!DOCTYPE html>\n<html lang=\"es\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Mando PS4 / Teclado → ESP32</title>\n<style>\n  :root { --bg:#14161a; --card:#1d2026; --txt:#e8e8e8; --dim:#8a8f98; --ok:#2ecc71; --bad:#e74c3c; --acc:#3d8bfd; }\n  * { box-sizing: border-box; }\n  body { margin:0; padding:20px; background:var(--bg); color:var(--txt); font:15px/1.4 system-ui, sans-serif; }\n  h1 { font-size:20px; margin:0 0 12px; }\n  .estado { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }\n  .pill { padding:4px 10px; border-radius:999px; background:var(--card); font-size:13px; }\n  .pill.ok { background:#1e4d33; } .pill.bad { background:#5a2222; }\n  .aviso { background:#4a3b12; padding:8px 12px; border-radius:8px; margin-bottom:12px; }\n  .grid { display:flex; gap:20px; flex-wrap:wrap; }\n  .card { background:var(--card); border-radius:12px; padding:14px; }\n  .stick { width:140px; height:140px; border-radius:50%; border:2px solid #3a3f48; position:relative; }\n  .stick .punto { width:18px; height:18px; border-radius:50%; background:var(--acc); position:absolute; left:61px; top:61px; }\n  .etq { color:var(--dim); font-size:12px; margin-top:6px; text-align:center; font-variant-numeric:tabular-nums; }\n  .barra { width:30px; height:140px; background:#2a2e35; border-radius:6px; position:relative; overflow:hidden; }\n  .barra div { position:absolute; bottom:0; width:100%; background:var(--acc); }\n  .botones { display:grid; grid-template-columns:repeat(6, auto); gap:6px; }\n  .btn { padding:4px 8px; border-radius:6px; background:#2a2e35; font-size:12px; text-align:center; }\n  .btn.on { background:var(--acc); color:#fff; }\n  pre { margin:14px 0 0; color:var(--dim); font-size:13px; }\n</style>\n</head>\n<body>\n<h1>Mando PS4 / Teclado → Node-RED → ESP32 (UDP)</h1>\n\n<div class=\"estado\">\n  <span id=\"stWs\" class=\"pill bad\">WebSocket: desconectado</span>\n  <span id=\"stPad\" class=\"pill bad\">Mando/Teclado: en espera (usa WASD, Flechas o Espacio)</span>\n  <span id=\"stEnv\" class=\"pill\">Enviando: no</span>\n</div>\n<div class=\"aviso\">Mantén esta pestaña visible: si la minimizas o cambias de pestaña se deja de enviar y el ESP32 se detiene por seguridad.</div>\n\n<div class=\"grid\">\n  <div class=\"card\"><div class=\"stick\" id=\"stickL\"><div class=\"punto\"></div></div><div class=\"etq\" id=\"txtL\">L: 0, 0</div></div>\n  <div class=\"card\"><div class=\"stick\" id=\"stickR\"><div class=\"punto\"></div></div><div class=\"etq\" id=\"txtR\">R: 0, 0</div></div>\n  <div class=\"card\" style=\"display:flex; gap:14px;\">\n    <div><div class=\"barra\"><div id=\"barL2\"></div></div><div class=\"etq\" id=\"txtL2\">L2 0</div></div>\n    <div><div class=\"barra\"><div id=\"barR2\"></div></div><div class=\"etq\" id=\"txtR2\">R2 0</div></div>\n  </div>\n  <div class=\"card\"><div class=\"botones\" id=\"botones\"></div></div>\n</div>\n<pre id=\"ultimo\">Último paquete: —</pre>\n\n<script>\n// ===== Configuración =====\nconst HZ = 50;            // paquetes por segundo hacia Node-RED\nconst ZONA_MUERTA = 0.08; // ignora movimientos pequeños del joystick (0..1)\nconst WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/mando';\n\n// Mapeo estándar del DualShock 4 en Chrome/Edge (índice = bit en \"b\")\nconst NOMBRES = ['X', 'O', '□', '△', 'L1', 'R1', 'L2', 'R2', 'Share', 'Options',\n                 'L3', 'R3', '↑', '↓', '←', '→', 'PS', 'Touch'];\n\nconst $ = (id) => document.getElementById(id);\nconst contBotones = $('botones');\nNOMBRES.forEach((n, i) => {\n  const d = document.createElement('div');\n  d.className = 'btn'; d.id = 'b' + i; d.textContent = n;\n  contBotones.appendChild(d);\n});\n\nfunction pill(el, ok, texto) { el.className = 'pill ' + (ok ? 'ok' : 'bad'); el.textContent = texto; }\n\n// ===== WebSocket con reconexión automática =====\nlet ws = null;\nfunction conectarWS() {\n  ws = new WebSocket(WS_URL);\n  ws.onopen  = () => pill($('stWs'), true, 'WebSocket: conectado');\n  ws.onclose = () => { pill($('stWs'), false, 'WebSocket: desconectado'); setTimeout(conectarWS, 1000); };\n  ws.onerror = () => ws.close();\n}\nconectarWS();\n\n// ===== Lectura del mando =====\nconst zm = (v) => (Math.abs(v) < ZONA_MUERTA ? 0 : v);\nconst pct = (v) => Math.round(v * 100) || 0; // || 0 evita \"-0\"\n\nfunction buscarMando() {\n  const pads = navigator.getGamepads ? navigator.getGamepads() : [];\n  for (const p of pads) if (p && p.connected) return p;\n  return null;\n}\n\nfunction leer(gp) {\n  const a = gp.axes, b = gp.buttons;\n  let mascara = 0;\n  for (let i = 0; i < b.length && i < 32; i++) if (b[i].pressed) mascara |= (1 << i);\n  return {\n    lx: pct(zm(a[0] || 0)),\n    ly: pct(-zm(a[1] || 0)),   // arriba = positivo\n    rx: pct(zm(a[2] || 0)),\n    ry: pct(-zm(a[3] || 0)),   // arriba = positivo\n    l2: pct(b[6] ? b[6].value : 0),\n    r2: pct(b[7] ? b[7].value : 0),\n    b: mascara >>> 0\n  };\n}\n\n// ===== Lectura del teclado (sin mando) =====\nconst teclas = new Set();\nconst BIT_MAP = {\n  'Space': 0,      // X (LED de prueba)\n  'KeyE': 1,       // O\n  'KeyQ': 2,       // □\n  'KeyR': 3        // △\n};\n\nwindow.addEventListener('keydown', (e) => {\n  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {\n    e.preventDefault();\n  }\n  teclas.add(e.code);\n});\n\nwindow.addEventListener('keyup', (e) => {\n  teclas.delete(e.code);\n});\n\nwindow.addEventListener('blur', () => {\n  teclas.clear(); // Seguridad: si sales de la ventana, suelta todas las teclas\n});\n\nfunction leerTeclado() {\n  let lx = 0, ly = 0, mascara = 0;\n  if (teclas.has('KeyA') || teclas.has('ArrowLeft'))  lx -= 100;\n  if (teclas.has('KeyD') || teclas.has('ArrowRight')) lx += 100;\n  if (teclas.has('KeyW') || teclas.has('ArrowUp'))    ly += 100;\n  if (teclas.has('KeyS') || teclas.has('ArrowDown'))  ly -= 100;\n\n  for (const [code, bitIdx] of Object.entries(BIT_MAP)) {\n    if (teclas.has(code)) mascara |= (1 << bitIdx);\n  }\n\n  return {\n    activo: lx !== 0 || ly !== 0 || mascara !== 0,\n    datos: { lx, ly, rx: 0, ry: 0, l2: 0, r2: 0, b: mascara >>> 0 }\n  };\n}\n\nconst NEUTRO = { lx: 0, ly: 0, rx: 0, ry: 0, l2: 0, r2: 0, b: 0 };\nfunction enviar(datos) {\n  if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 1024) {\n    ws.send(JSON.stringify(datos));\n    return true;\n  }\n  return false;\n}\n\ndocument.addEventListener('visibilitychange', () => {\n  if (document.hidden) {\n    teclas.clear();\n    enviar(NEUTRO);\n  }\n});\n\n// ===== Pintar en pantalla =====\nfunction moverStick(id, x, y) {\n  const p = $(id).querySelector('.punto');\n  p.style.left = (61 + x * 0.6) + 'px';\n  p.style.top  = (61 - y * 0.6) + 'px';\n}\nfunction pintar(d) {\n  moverStick('stickL', d.lx, d.ly); $('txtL').textContent = 'L: ' + d.lx + ', ' + d.ly;\n  moverStick('stickR', d.rx, d.ry); $('txtR').textContent = 'R: ' + d.rx + ', ' + d.ry;\n  $('barL2').style.height = d.l2 + '%'; $('txtL2').textContent = 'L2 ' + d.l2;\n  $('barR2').style.height = d.r2 + '%'; $('txtR2').textContent = 'R2 ' + d.r2;\n  NOMBRES.forEach((_, i) => $('b' + i).classList.toggle('on', (d.b >>> i) & 1));\n}\n\n// ===== Bucle principal =====\nlet enviandoNeutroFinal = false;\n\nsetInterval(() => {\n  const gp = buscarMando();\n  const kb = leerTeclado();\n  let datos = null;\n\n  if (gp) {\n    pill($('stPad'), true, 'Mando: ' + gp.id.slice(0, 40));\n    datos = leer(gp);\n    enviandoNeutroFinal = true;\n  } else if (kb.activo) {\n    pill($('stPad'), true, 'Teclado activo (WASD / Flechas / Espacio)');\n    datos = kb.datos;\n    enviandoNeutroFinal = true;\n  } else {\n    pill($('stPad'), false, 'Sin mando (pulsa WASD, Flechas o Espacio)');\n    if (enviandoNeutroFinal) {\n      // Manda un paquete en 0 al soltar la tecla para frenar al instante\n      pintar(NEUTRO);\n      enviar(NEUTRO);\n      enviandoNeutroFinal = false;\n    }\n    $('stEnv').textContent = 'Enviando: no';\n    return;\n  }\n\n  pintar(datos);\n  if (document.hidden) return;\n\n  const ok = enviar(datos);\n  $('stEnv').textContent = 'Enviando: ' + (ok ? HZ + ' Hz' : 'no');\n  if (ok) $('ultimo').textContent = 'Último paquete: ' + JSON.stringify(datos);\n}, 1000 / HZ);\n\nwindow.addEventListener('gamepadconnected',    (e) => console.log('Mando conectado:', e.gamepad.id));\nwindow.addEventListener('gamepaddisconnected', (e) => console.log('Mando desconectado:', e.gamepad.id));\n</script>\n</body>\n</html>",
+        "output": "str",
+        "x": 310,
+        "y": 100,
+        "wires": [
+            [
+                "a1f0c0de00000022"
+            ]
+        ]
+    },
+    {
+        "id": "a1f0c0de00000022",
+        "type": "http response",
+        "z": "a1f0c0de00000001",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 490,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "a1f0c0de00000030",
+        "type": "websocket in",
+        "z": "a1f0c0de00000001",
+        "name": "Datos del mando",
+        "server": "a1f0c0de00000090",
+        "client": "",
+        "x": 130,
+        "y": 180,
+        "wires": [
+            [
+                "a1f0c0de00000031"
+            ]
+        ]
+    },
+    {
+        "id": "a1f0c0de00000031",
+        "type": "function",
+        "z": "a1f0c0de00000001",
+        "name": "JSON → CSV",
+        "func": "let d;\ntry {\n    d = JSON.parse(msg.payload);\n} catch (e) {\n    return null;\n}\n\nconst lim = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));\nconst mask = (Number(d.b) >>> 0);\n\n// Extrae los 16 botones en el orden exacto que espera el ESP32:\n// 0:X, 1:Circulo, 2:Cuadrado, 3:Triangulo, 4:L1, 5:R1, 6:L2(btn), 7:R2(btn),\n// 8:Share, 9:Options, 10:L3, 11:R3, 12:Arriba, 13:Abajo, 14:Izquierda, 15:Derecha\nconst botones = [];\nfor (let i = 0; i < 16; i++) {\n    botones.push((mask >>> i) & 1);\n}\n\nconst campos = [\n    lim(d.lx, -100, 100),\n    lim(d.ly, -100, 100),\n    lim(d.rx, -100, 100),\n    lim(d.ry, -100, 100),\n    lim(d.l2, 0, 100),\n    lim(d.r2, 0, 100),\n    ...botones\n];\n\nmsg.payload = campos.join(',');\n\nconst ahora = Date.now();\nif (ahora - (context.get('t') || 0) > 250) {\n    node.status({ fill: 'green', shape: 'dot', text: msg.payload });\n    context.set('t', ahora);\n}\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 330,
+        "y": 180,
+        "wires": [
+            [
+                "a1f0c0de00000032",
+                "a1f0c0de00000033"
+            ]
+        ]
+    },
+    {
+        "id": "a1f0c0de00000032",
+        "type": "udp out",
+        "z": "a1f0c0de00000001",
+        "name": "UDP → ESP32",
+        "addr": "192.168.1.50",
+        "iface": "",
+        "port": "4210",
+        "ipv": "udp4",
+        "outport": "",
+        "base64": false,
+        "multicast": "false",
+        "x": 540,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "a1f0c0de00000033",
+        "type": "debug",
+        "z": "a1f0c0de00000001",
+        "name": "Ver paquetes",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 540,
+        "y": 240,
+        "wires": []
+    }
 ]

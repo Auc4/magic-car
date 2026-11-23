@@ -5,26 +5,22 @@
 const char* wifiSsid  = WIFI_SSID;
 const char* wifiClave = WIFI_CLAVE;
 const int   puertoUdp = PUERTO_UDP;
+const unsigned long TIEMPO_SIN_DATOS = 500; // ms sin datos -> frena todo
 
 IPAddress ipFija(IP_ESP32);
 IPAddress puerta(IP_GATEWAY);
 IPAddress mascara(IP_SUBNET);
-const unsigned long TIEMPO_SIN_DATOS = 500; // ms sin datos -> frena todo
 
-IPAddress ipFija(192, 168, 1, 50);
-IPAddress puerta(192, 168, 1, 1);
-IPAddress mascara(255, 255, 255, 0);
+// ===== Pines ESP32 -> L298N (INTERCAMBIADOS) =====
+// Motor de tracción -> En OUT3 y OUT4 (ENB, IN3, IN4)
+const int PIN_ENA = 4;
+const int PIN_IN1 = 17;
+const int PIN_IN2 = 16;
 
-// ===== Pines ESP32 -> L298N =====
-// Motor de tracción (OUT1 = +, OUT2 = -)
-const int PIN_ENA = 19;
-const int PIN_IN1 = 18;
-const int PIN_IN2 = 5;
-
-// Motor de dirección (OUT3 = +, OUT4 = -)
-const int PIN_ENB = 4;
-const int PIN_IN3 = 17;
-const int PIN_IN4 = 16;
+// Motor de dirección -> En OUT1 y OUT2 (ENA, IN1, IN2)
+const int PIN_ENB = 19;
+const int PIN_IN3 = 18;
+const int PIN_IN4 = 5;
 
 const int PIN_LED = 2;
 
@@ -62,7 +58,7 @@ int botonTouchpad  = 0;
 
 // ===== Control de motores =====
 void moverTraccion(int valor) {
-  // valor entre -100 y 100
+  // valor entre -100 y 100 (OUT3 y OUT4)
   if (valor > 10) {
     // Adelante
     digitalWrite(PIN_IN1, HIGH);
@@ -84,18 +80,18 @@ void moverTraccion(int valor) {
 }
 
 void moverDireccion(int valor) {
-  // valor entre -100 (izquierda) y 100 (derecha)
-  if (valor > 15) {
+  // valor entre -100 (izquierda) y 100 (derecha) (OUT1 y OUT2)
+  if (valor > 8) {
     // Girar derecha
     digitalWrite(PIN_IN3, HIGH);
     digitalWrite(PIN_IN4, LOW);
-    int pwm = map(valor, 15, 100, 140, 255);
+    int pwm = map(valor, 8, 100, 220, 255);
     ledcWrite(PIN_ENB, pwm);
-  } else if (valor < -15) {
+  } else if (valor < -8) {
     // Girar izquierda
     digitalWrite(PIN_IN3, LOW);
     digitalWrite(PIN_IN4, HIGH);
-    int pwm = map(-valor, 15, 100, 140, 255);
+    int pwm = map(-valor, 8, 100, 220, 255);
     ledcWrite(PIN_ENB, pwm);
   } else {
     // Centro (suelta motor de dirección)
@@ -106,23 +102,20 @@ void moverDireccion(int valor) {
 }
 
 void usarMando() {
-  // LED indicador con botón X (o Espacio en teclado)
+  // LED indicador con botón X
   digitalWrite(PIN_LED, botonX == 1 ? HIGH : LOW);
 
-  // Calcula aceleración: soporta Joystick Y (W/S) o gatillos R2/L2 (para mañana con mando)
-  int aceleracion = joystickIzquierdoY;
-  if (gatilloR2 > 10) {
-    aceleracion = gatilloR2;
-  } else if (gatilloL2 > 10) {
-    aceleracion = -gatilloL2;
-  }
-  if (flechaArriba == 1) aceleracion = 100;
-  if (flechaAbajo == 1)  aceleracion = -100;
+  // TRACCIÓN: L2 acelera (analógico), L1 retrocede
+  int aceleracion = 0;
 
-  // Calcula dirección: soporta Joystick X (A/D) o flechas Izquierda/Derecha
-  int giro = joystickIzquierdoX;
-  if (flechaDerecha == 1)   giro = 100;
-  if (flechaIzquierda == 1) giro = -100;
+  if (gatilloL2 > 10) {
+    aceleracion = gatilloL2;
+  } else if (botonL1 == 1) {
+    aceleracion = -85;
+  }
+
+  // DIRECCIÓN: Palanca derecha eje X (ignoramos palanca izquierda dañada)
+  int giro = joystickDerechoX;
 
   moverTraccion(aceleracion);
   moverDireccion(giro);
@@ -222,10 +215,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.config(ipFija, puerta, mascara);
-  WiFi.begin(WIFI_SSID, WIFI_CLAVE);
+  WiFi.begin(wifiSsid, wifiClave);
 
   Serial.print("Conectando a ");
-  Serial.print(WIFI_SSID);
+  Serial.print(wifiSsid);
   while (WiFi.status() != WL_CONNECTED) {
     delay(300);
     Serial.print(".");
@@ -234,9 +227,9 @@ void setup() {
   Serial.print("IP del ESP32: ");
   Serial.println(WiFi.localIP());
 
-  udp.begin(PUERTO_UDP);
+  udp.begin(puertoUdp);
   Serial.print("Escuchando UDP en puerto ");
-  Serial.println(PUERTO_UDP);
+  Serial.println(puertoUdp);
 }
 
 void loop() {
