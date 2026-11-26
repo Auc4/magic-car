@@ -5,13 +5,13 @@
 const char* wifiSsid  = WIFI_SSID;
 const char* wifiClave = WIFI_CLAVE;
 const int   puertoUdp = PUERTO_UDP;
-const unsigned long TIEMPO_SIN_DATOS = 500; // ms sin datos -> frena todo
+const unsigned long TIEMPO_SIN_DATOS = 600; // ms sin datos -> frena todo
 
 IPAddress ipFija(IP_ESP32);
 IPAddress puerta(IP_GATEWAY);
 IPAddress mascara(IP_SUBNET);
 
-// ===== Pines ESP32 -> L298N (INTERCAMBIADOS) =====
+// ===== Pines ESP32 -> L298N =====
 // Motor de tracción -> En OUT3 y OUT4 (ENB, IN3, IN4)
 const int PIN_ENA = 4;
 const int PIN_IN1 = 17;
@@ -25,15 +25,15 @@ const int PIN_IN4 = 5;
 const int PIN_LED = 2;
 
 // Configuración PWM
-const int FREC_PWM = 1000; // 1 kHz (ideal para L298N y motores DC)
-const int RES_PWM  = 8;    // 0 a 255
+const int FREC_PWM = 500;
+const int RES_PWM  = 8;
 
 WiFiUDP udp;
 unsigned long ultimoPaquete = 0;
 
-// ===== Variables del mando / teclado =====
-int joystickIzquierdoX = 0; // -100 (izq) a 100 (der)
-int joystickIzquierdoY = 0; // -100 (atrás) a 100 (adelante)
+// ===== Variables del mando =====
+int joystickIzquierdoX = 0;
+int joystickIzquierdoY = 0;
 int joystickDerechoX   = 0;
 int joystickDerechoY   = 0;
 int gatilloL2 = 0;
@@ -58,17 +58,17 @@ int botonTouchpad  = 0;
 
 // ===== Control de motores =====
 void moverTraccion(int valor) {
-  // valor entre -100 y 100 (OUT3 y OUT4)
+  // Polaridad invertida por software para que L2 vaya hacia adelante
   if (valor > 10) {
-    // Adelante
-    digitalWrite(PIN_IN1, HIGH);
-    digitalWrite(PIN_IN2, LOW);
-    int pwm = map(valor, 10, 100, 90, 255); // 90 mínimo para vencer inercia del motor
-    ledcWrite(PIN_ENA, pwm);
-  } else if (valor < -10) {
-    // Retroceso
+    // Adelante (L2)
     digitalWrite(PIN_IN1, LOW);
     digitalWrite(PIN_IN2, HIGH);
+    int pwm = map(valor, 10, 100, 90, 255);
+    ledcWrite(PIN_ENA, pwm);
+  } else if (valor < -10) {
+    // Retroceso (L1)
+    digitalWrite(PIN_IN1, HIGH);
+    digitalWrite(PIN_IN2, LOW);
     int pwm = map(-valor, 10, 100, 90, 255);
     ledcWrite(PIN_ENA, pwm);
   } else {
@@ -80,21 +80,15 @@ void moverTraccion(int valor) {
 }
 
 void moverDireccion(int valor) {
-  // valor entre -100 (izquierda) y 100 (derecha) (OUT1 y OUT2)
-  if (valor > 8) {
-    // Girar derecha
+  if (valor > 15) {
     digitalWrite(PIN_IN3, HIGH);
     digitalWrite(PIN_IN4, LOW);
-    int pwm = map(valor, 8, 100, 220, 255);
-    ledcWrite(PIN_ENB, pwm);
-  } else if (valor < -8) {
-    // Girar izquierda
+    ledcWrite(PIN_ENB, 255);
+  } else if (valor < -15) {
     digitalWrite(PIN_IN3, LOW);
     digitalWrite(PIN_IN4, HIGH);
-    int pwm = map(-valor, 8, 100, 220, 255);
-    ledcWrite(PIN_ENB, pwm);
+    ledcWrite(PIN_ENB, 255);
   } else {
-    // Centro (suelta motor de dirección)
     digitalWrite(PIN_IN3, LOW);
     digitalWrite(PIN_IN4, LOW);
     ledcWrite(PIN_ENB, 0);
@@ -107,15 +101,19 @@ void usarMando() {
 
   // TRACCIÓN: L2 acelera (analógico), L1 retrocede
   int aceleracion = 0;
-
   if (gatilloL2 > 10) {
     aceleracion = gatilloL2;
   } else if (botonL1 == 1) {
     aceleracion = -85;
   }
 
-  // DIRECCIÓN: Palanca derecha eje X (ignoramos palanca izquierda dañada)
-  int giro = joystickDerechoX;
+  // DIRECCIÓN: Cuadrado = Izquierda (-100), Círculo = Derecha (100)
+  int giro = 0;
+  if (botonCirculo == 1 && botonCuadrado == 0) {
+    giro = 100;
+  } else if (botonCuadrado == 1 && botonCirculo == 0) {
+    giro = -100;
+  }
 
   moverTraccion(aceleracion);
   moverDireccion(giro);
@@ -200,13 +198,11 @@ void setup() {
   pinMode(PIN_IN3, OUTPUT);
   pinMode(PIN_IN4, OUTPUT);
 
-  // Estado inicial seguro (motores apagados)
   digitalWrite(PIN_IN1, LOW);
   digitalWrite(PIN_IN2, LOW);
   digitalWrite(PIN_IN3, LOW);
   digitalWrite(PIN_IN4, LOW);
 
-  // Configurar PWM en ENA y ENB (ESP32 Arduino Core 3.x)
   ledcAttach(PIN_ENA, FREC_PWM, RES_PWM);
   ledcAttach(PIN_ENB, FREC_PWM, RES_PWM);
   ledcWrite(PIN_ENA, 0);
